@@ -1,1 +1,1014 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FDA Regulatory Determination Tool</title>
+    <meta name="description" content="Interactive decision tree to determine FDA regulatory requirements for drugs, biologics, and medical devices">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+                'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 9999;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <div class="spinner"></div>
+        <p style="color: #666;">Loading FDA Decision Tree...</p>
+    </div>
+    <div id="root"></div>
 
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        // Icon Components
+        const ChevronRight = (props) => (
+            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+        );
+
+        const ChevronLeft = (props) => (
+            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+        );
+
+        const HelpCircle = (props) => (
+            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+        );
+
+        const CheckCircle = (props) => (
+            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+        );
+
+        const AlertCircle = (props) => (
+            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+        );
+
+        const Info = (props) => (
+            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+            </svg>
+        );
+
+        const Download = (props) => (
+            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+        );
+
+        const FDADecisionTreeBot = () => {
+            const [currentStep, setCurrentStep] = useState('start');
+            const [answers, setAnswers] = useState({});
+            const [history, setHistory] = useState(['start']);
+            const [showDefinition, setShowDefinition] = useState(null);
+
+            const questions = {
+                start: {
+                    type: 'category',
+                    text: 'What type of product are you investigating?',
+                    description: 'Select the category that best describes your study product',
+                    options: [
+                        { value: 'drug', label: 'A. Drug or Biologic', icon: '💊', next: 'drug_q1' },
+                        { value: 'device', label: 'B. Medical Device', icon: '🔬', next: 'device_q1' }
+                    ]
+                },
+
+                // ========== A. DRUGS/BIOLOGICS ==========
+                drug_q1: {
+                    text: 'Question 1: Is this drug being investigated in the proposed study one of the following in vitro diagnostic biological products?',
+                    description: 'Intended to be used in a diagnostic procedure that confirms the diagnosis made by another, medically established, diagnostic product or procedure and shipped in compliance with 21 CFR 312.160',
+                    type: 'multi-checkbox',
+                    options: [
+                        { value: 'blood_grouping', label: 'i. Blood grouping serum' },
+                        { value: 'reagent_cells', label: 'ii. Reagent red blood cells' },
+                        { value: 'anti_human', label: 'iii. Anti-human globulin' }
+                    ],
+                    yesOutcome: 'drug_exempt_invitro',
+                    noNext: 'drug_q1b'
+                },
+
+                drug_q1b: {
+                    text: 'Question 1b: Is the drug intended solely for tests in vitro or in laboratory research animals?',
+                    description: 'And shipped in compliance with 21 CFR 312.160',
+                    type: 'boolean',
+                    yesOutcome: 'drug_exempt_invitro',
+                    noNext: 'drug_q2'
+                },
+
+                drug_q2: {
+                    text: 'Question 2: Is the drug being investigated in the proposed study lawfully marketed in the US?',
+                    type: 'boolean',
+                    helpText: 'If No, IND is required. If Yes, please answer questions 2a through 2e.',
+                    noOutcome: 'drug_ind_required',
+                    yesNext: 'drug_q2a'
+                },
+
+                drug_q2a: {
+                    text: 'Question 2a: Is the proposed use (e.g. disease, treatment, prophylaxis) of this drug an approved indication in the US?',
+                    type: 'boolean',
+                    noOutcome: 'drug_ind_required',
+                    yesNext: 'drug_q2b'
+                },
+
+                drug_q2b: {
+                    text: 'Question 2b: Is the formulation (e.g. tablets, injectables) of this drug approved in the US?',
+                    type: 'boolean',
+                    noOutcome: 'drug_ind_required',
+                    yesNext: 'drug_q2c'
+                },
+
+                drug_q2c: {
+                    text: 'Question 2c: Is the proposed regimen (e.g. dosage level, frequency, duration) of this drug approved in the US?',
+                    type: 'boolean',
+                    noOutcome: 'drug_ind_required',
+                    yesNext: 'drug_q2d'
+                },
+
+                drug_q2d: {
+                    text: 'Question 2d: Is the proposed route of administration of this drug approved in the US?',
+                    type: 'boolean',
+                    noOutcome: 'drug_ind_required',
+                    yesNext: 'drug_q2e'
+                },
+
+                drug_q2e: {
+                    text: 'Question 2e: Is the patient population that the drug will be used for approved in the US?',
+                    type: 'boolean',
+                    helpText: 'If No to any of questions 2a-2e, IND is required. If Yes to all, proceed to question 3.',
+                    noOutcome: 'drug_ind_required',
+                    yesNext: 'drug_q3'
+                },
+
+                drug_q3: {
+                    text: 'Question 3: Are the results of the study to be reported to FDA in support of a new indication?',
+                    type: 'boolean',
+                    yesOutcome: 'drug_ind_may_required',
+                    noNext: 'drug_q4'
+                },
+
+                drug_q4: {
+                    text: 'Question 4: Is the investigation intended to support any significant change in the product labeling?',
+                    type: 'boolean',
+                    yesOutcome: 'drug_ind_may_required',
+                    noNext: 'drug_q5'
+                },
+
+                drug_q5: {
+                    text: 'Question 5: Is the investigation intended to support a significant change in the advertising?',
+                    type: 'boolean',
+                    yesOutcome: 'drug_ind_may_required',
+                    noNext: 'drug_q6'
+                },
+
+                drug_q6: {
+                    text: 'Question 6: Does the investigation involve other factors that significantly increase the risks (or decrease the acceptability of the risks) associated with the use of the drug?',
+                    type: 'boolean',
+                    helpText: 'If Yes to any of questions 3-6, IND may be required. If No to all, the study is exempt from IND.',
+                    yesOutcome: 'drug_ind_may_required',
+                    noOutcome: 'drug_exempt'
+                },
+
+                // ========== B. MEDICAL DEVICES ==========
+                device_q1: {
+                    text: 'Question 1: Is a medical device, as defined below, being proposed for use as part of this study?',
+                    description: '"An instrument, apparatus, implement, machine, contrivance, implant, in vitro reagent, or other similar or related article, including a component part, or accessory which is: recognized in the official National Formulary, or the United States Pharmacopoeia, or any supplement to them; intended for use in the diagnosis of disease or other conditions, or in the cure, mitigation, treatment, or prevention of disease, in man or other animals; or intended to affect the structure or any function of the body of man or other animals, and which does not achieve any of its primary intended purposes through chemical action within or on the body of man or other animals and which is not dependent upon being metabolized for the achievement of any of its primary intended purposes."',
+                    type: 'boolean',
+                    noOutcome: 'device_not_applicable',
+                    yesNext: 'device_q2'
+                },
+
+                device_q2: {
+                    text: 'Question 2: Is the proposed medical device cleared/approved for use by the FDA?',
+                    type: 'boolean',
+                    noNext: 'device_q4',
+                    yesNext: 'device_q3'
+                },
+
+                device_q3: {
+                    text: 'Question 3: If the medical device has a cleared/approved indication(s), will it be used in the study in accordance with the FDA-approved/cleared indications for the device?',
+                    type: 'boolean',
+                    helpText: 'If Yes to questions 2 and 3, the study is exempt from IDE regulations (see SECTION 4). If No to #2 or #3, FDA IDE regulations do apply.',
+                    yesOutcome: 'device_exempt_approved',
+                    noNext: 'device_q4'
+                },
+
+                device_q4: {
+                    text: 'Question 4: Is this an in-vitro diagnostic device (IVD)?',
+                    description: 'i.e. reagent, instrument, and system intended for use in diagnosis of disease or other conditions, including a determination of the state of health, in order to cure, mitigate, treat, or prevent disease or its sequelae; such product is intended for use in the collection, preparation, and examination of specimens taken from the human body',
+                    type: 'boolean',
+                    helpText: 'If Yes go to SECTION 1 (IVDs), if No go to SECTION 2 (Medical Devices - NOT IVDs)',
+                    yesNext: 'ivd_q1',
+                    noNext: 'device_section2_q1'
+                },
+
+                // ========== SECTION 1: IN-VITRO DIAGNOSTICS (IVDs) ==========
+                ivd_q1: {
+                    text: 'SECTION 1 - Question 1: Is the IVD testing invasive?',
+                    type: 'boolean',
+                    yesOutcome: 'device_ide_required',
+                    noNext: 'ivd_q2'
+                },
+
+                ivd_q2: {
+                    text: 'SECTION 1 - Question 2: Does the IVD testing require an invasive sampling procedure that presents significant risk?',
+                    type: 'boolean',
+                    yesOutcome: 'device_ide_required',
+                    noNext: 'ivd_q3'
+                },
+
+                ivd_q3: {
+                    text: 'SECTION 1 - Question 3: Does the IVD by design or intention introduce energy into a subject?',
+                    type: 'boolean',
+                    yesOutcome: 'device_ide_required',
+                    noNext: 'ivd_q4'
+                },
+
+                ivd_q4: {
+                    text: 'SECTION 1 - Question 4: Is the IVD intended to be used in a diagnostic procedure without confirming the diagnosis made by another, medically established, diagnostic product or procedure?',
+                    type: 'boolean',
+                    helpText: 'If all answers to questions 1-4 are No, the study is EXEMPT from IDE requirements. If one answer is Yes, IDE is required.',
+                    yesOutcome: 'device_ide_required',
+                    noNext: 'ivd_q5'
+                },
+
+                ivd_q5: {
+                    text: 'SECTION 1 - Question 5: Does the IVD testing use leftover specimens (not collected for this research/study) for which the subjects can be identified?',
+                    type: 'boolean',
+                    noNext: 'ivd_exempt',
+                    yesNext: 'ivd_q6'
+                },
+
+                ivd_q6: {
+                    text: 'SECTION 1 - Question 6: Are the results of the IVD test communicated to or otherwise associated with the identified subjects?',
+                    type: 'boolean',
+                    helpText: 'If No to questions 5 and 6, informed consent regulations may not be applicable. If Yes to question 5 or 6, informed consent is required.',
+                    yesOutcome: 'ivd_exempt_consent',
+                    noOutcome: 'ivd_exempt'
+                },
+
+                // ========== SECTION 2: MEDICAL DEVICES (NOT IVDs) ==========
+                device_section2_q1: {
+                    text: 'SECTION 2 - Question 1: Is the proposed device undergoing consumer preference testing, testing of a modification, or testing of a combination of two or more devices in commercial distribution?',
+                    type: 'boolean',
+                    noNext: 'device_section2_custom',
+                    yesNext: 'device_section2_q2'
+                },
+
+                device_section2_q2: {
+                    text: 'SECTION 2 - Question 2: Is the testing for the purpose of determining safety or effectiveness?',
+                    type: 'boolean',
+                    yesNext: 'device_section2_q3',
+                    noNext: 'device_section2_q3_check'
+                },
+
+                device_section2_q3_check: {
+                    text: 'SECTION 2 - Question 3: Does the testing put subjects at risk?',
+                    type: 'boolean',
+                    helpText: 'If Yes to question 1 and No to questions 2 & 3, the application is exempt from IDE requirements (see SECTION 4). Otherwise, IDE application may be required.',
+                    yesNext: 'device_section2_custom',
+                    noOutcome: 'device_exempt_consumer'
+                },
+
+                device_section2_q3: {
+                    text: 'SECTION 2 - Question 3: Does the testing put subjects at risk?',
+                    type: 'boolean',
+                    yesNext: 'device_risk_q1',
+                    noNext: 'device_section2_custom'
+                },
+
+                device_section2_custom: {
+                    text: 'SECTION 2 - Custom Device Question: Is it a custom device?',
+                    description: 'Custom device means a device that: (1) Necessarily deviates from devices generally available or from an applicable performance standard or premarket approval requirement in order to comply with the order of an individual physician or dentist; (2) Is not generally available to, or generally used by, other physicians or dentists; (3) Is not generally available in finished form for purchase or for dispensing upon prescription; (4) Is not offered for commercial distribution through labeling or advertising; and (5) Is intended for use by an individual patient named in the order of a physician or dentist, and is to be made in a specific form for that patient, or is intended to meet the special needs of the physician or dentist in the course of professional practice.',
+                    type: 'boolean',
+                    helpText: 'If Yes, the device is exempt from IDE regulations. If the custom device is being studied to determine the safety and effectiveness of the device for commercial distribution, it is not exempt from IDE regulations.',
+                    yesNext: 'device_custom_commercial',
+                    noNext: 'device_risk_q1'
+                },
+
+                device_custom_commercial: {
+                    text: 'Is this custom device being studied to determine the safety and effectiveness of the device for commercial distribution?',
+                    type: 'boolean',
+                    yesNext: 'device_risk_q1',
+                    noOutcome: 'device_exempt_custom'
+                },
+
+                // ========== SECTION 3: RISK DETERMINATION FOR MEDICAL DEVICES ==========
+                device_risk_q1: {
+                    text: 'SECTION 3 - Question 1: Is the device a banned device?',
+                    type: 'boolean',
+                    yesOutcome: 'device_sr_ide',
+                    noNext: 'device_risk_q2'
+                },
+
+                device_risk_q2: {
+                    text: 'SECTION 3 - Question 2: Is the device an implant (a device placed into a surgically or naturally formed cavity of the human body, and intended to remain there for a period of 30 days or more) that presents a potential for serious risk to the health, safety, or welfare of the subject?',
+                    type: 'boolean',
+                    yesOutcome: 'device_sr_ide',
+                    noNext: 'device_risk_q3'
+                },
+
+                device_risk_q3: {
+                    text: 'SECTION 3 - Question 3: Is the device purported or represented to be for use in supporting or sustaining human life and presents a potential for serious risk to the health, safety, or welfare of a subject?',
+                    type: 'boolean',
+                    yesOutcome: 'device_sr_ide',
+                    noNext: 'device_risk_q4'
+                },
+
+                device_risk_q4: {
+                    text: 'SECTION 3 - Question 4: Is the device for a use of substantial importance in diagnosing, curing, mitigating, or treating disease, or otherwise preventing impairment of human health and presents a potential for serious risk to the health, safety, or welfare of a subject?',
+                    type: 'boolean',
+                    yesOutcome: 'device_sr_ide',
+                    noNext: 'device_risk_q5'
+                },
+
+                device_risk_q5: {
+                    text: 'SECTION 3 - Question 5: Does the device present a potential for serious risk to the health, safety, or welfare of a subject in a way other than those described above?',
+                    type: 'boolean',
+                    helpText: 'If Yes to any of questions 1-5, the device is a significant risk (SR) device and an IDE must be submitted to the FDA. If No to all questions, the device is a non-significant risk (NSR) device.',
+                    yesOutcome: 'device_sr_ide',
+                    noOutcome: 'device_nsr'
+                }
+            };
+
+            const outcomes = {
+                // DRUGS/BIOLOGICS OUTCOMES
+                drug_exempt_invitro: {
+                    title: 'IND Not Required - Exempt Study',
+                    type: 'success',
+                    icon: CheckCircle,
+                    message: 'Investigational New Drug Application (IND) is not required.',
+                    details: 'The drug qualifies as an in vitro diagnostic biological product or is intended solely for in vitro tests or laboratory research animals (shipped in compliance with 21 CFR 312.160).',
+                    requirements: [
+                        'Do not complete the rest of the form',
+                        'Informed consent regulations apply (21 CFR 50)',
+                        'IRB review is required (21 CFR 56)'
+                    ],
+                    nextSteps: [
+                        'Submit protocol to IRB for review',
+                        'Prepare informed consent documents',
+                        'Ensure compliance with 21 CFR 312.160 shipping requirements',
+                        'Contact Regulatory Affairs at RegAffairs@CDC.Gov for further consultation'
+                    ]
+                },
+
+                drug_ind_required: {
+                    title: 'IND Required',
+                    type: 'error',
+                    icon: AlertCircle,
+                    message: 'An Investigational New Drug (IND) application is required for this study.',
+                    details: 'The proposed use does not meet all criteria for exemption. Do not complete the rest of the form.',
+                    requirements: [
+                        'IND application must be submitted to FDA',
+                        'FDA approval required before study begins',
+                        'IRB review and approval required',
+                        'Informed consent from all participants',
+                        'Full compliance with 21 CFR 312 regulations'
+                    ],
+                    nextSteps: [
+                        'Contact Regulatory Affairs immediately at RegAffairs@CDC.Gov for further consultation',
+                        'Do not begin study until IND is approved',
+                        'Prepare comprehensive IND application package',
+                        'Plan for ongoing safety monitoring and reporting'
+                    ]
+                },
+
+                drug_ind_may_required: {
+                    title: 'IND May Be Required',
+                    type: 'warning',
+                    icon: AlertCircle,
+                    message: 'An IND may be required for this study.',
+                    details: 'You answered Yes to at least one of questions 3-6, indicating the investigation may require an IND.',
+                    requirements: [
+                        'Regulatory Affairs consultation required',
+                        'Determination needed on IND necessity',
+                        'IRB review will be required',
+                        'Informed consent regulations apply'
+                    ],
+                    nextSteps: [
+                        'Contact Regulatory Affairs at RegAffairs@CDC.Gov for further consultation',
+                        'Do not proceed until determination is made',
+                        'Prepare preliminary study documentation',
+                        'Be ready to submit IND if required'
+                    ]
+                },
+
+                drug_exempt: {
+                    title: 'Study is Exempt from IND',
+                    type: 'success',
+                    icon: CheckCircle,
+                    message: 'The study is exempt from IND requirements.',
+                    details: 'You answered No to all of questions 3-6. The drug study meets criteria for IND exemption.',
+                    requirements: [
+                        'Informed consent regulations apply (21 CFR 50)',
+                        'IRB review is required (21 CFR 56)',
+                        'Must not be for commercial distribution',
+                        'Must not support labeling or advertising changes'
+                    ],
+                    nextSteps: [
+                        'Submit protocol to IRB',
+                        'Prepare informed consent documents',
+                        'Maintain study records',
+                        'Ensure study stays within exempt scope'
+                    ]
+                },
+
+                // MEDICAL DEVICES OUTCOMES
+                device_not_applicable: {
+                    title: 'FDA Medical Device Regulations Do Not Apply',
+                    type: 'info',
+                    icon: Info,
+                    message: 'FDA medical device regulations do not apply to this study.',
+                    details: 'The product does not meet the definition of a medical device.',
+                    requirements: [
+                        'IRB review may still be required',
+                        'Other regulatory frameworks may apply',
+                        'Informed consent may be needed'
+                    ],
+                    nextSteps: [
+                        'Consult with your IRB',
+                        'Determine if other regulations apply',
+                        'Document the determination'
+                    ]
+                },
+
+                device_exempt_approved: {
+                    title: 'Study is Exempt from IDE Regulations',
+                    type: 'success',
+                    icon: CheckCircle,
+                    message: 'The study is exempt from Investigational Device Exemption (IDE) regulations.',
+                    details: 'You answered Yes to questions 2 and 3. The device is FDA-cleared/approved and will be used according to its approved indications. However, other FDA regulations still apply (see SECTION 4).',
+                    requirements: [
+                        'Do not complete the rest of the form',
+                        'Subject only to clinical investigator disqualification regulations (21 CFR 812.119)',
+                        'Must comply with FDA requirements for IRB review (21 CFR 56)',
+                        'Must comply with informed consent requirements (21 CFR 50)',
+                        'See SECTION 4 for exempt study requirements'
+                    ],
+                    nextSteps: [
+                        'Verify device approval status',
+                        'Submit to IRB if required',
+                        'Ensure proper informed consent',
+                        'Maintain study documentation'
+                    ]
+                },
+
+                device_ide_required: {
+                    title: 'IDE Required - Contact Regulatory Affairs',
+                    type: 'error',
+                    icon: AlertCircle,
+                    message: 'An Investigational Device Exemption (IDE) is required for this study.',
+                    details: 'You answered Yes to at least one of the IVD questions 1-4. Go to SECTION 3 and contact Regulatory Affairs.',
+                    requirements: [
+                        'IDE application must be submitted to FDA',
+                        'FDA approval required before study begins',
+                        'IRB review and approval required',
+                        'Informed consent from all participants',
+                        'Full compliance with 21 CFR 812 regulations'
+                    ],
+                    nextSteps: [
+                        'Contact Regulatory Affairs immediately at RegAffairs@CDC.Gov for further consultation',
+                        'Do not begin study until IDE is approved',
+                        'Prepare comprehensive IDE application',
+                        'Go to SECTION 3 for risk determination'
+                    ]
+                },
+
+                ivd_exempt: {
+                    title: 'IVD Study EXEMPT from IDE Requirements',
+                    type: 'success',
+                    icon: CheckCircle,
+                    message: 'The study is EXEMPT from IDE requirements.',
+                    details: 'All answers to questions 1-4 are No, and you answered No to questions 5 and 6. Labeling requirements still apply (21 CFR 809.10(c)). See SECTION 4 for exempt study requirements.',
+                    requirements: [
+                        'Labeling requirements apply (21 CFR 809.10(c))',
+                        'IRB review still applies',
+                        'Informed consent regulations may not be applicable to the exempt IVD study',
+                        'Subject only to clinical investigator disqualification regulations (21 CFR 812.119)',
+                        'Must comply with FDA requirements for IRB review (21 CFR 56)'
+                    ],
+                    nextSteps: [
+                        'Contact Regulatory Affairs at RegAffairs@CDC.Gov regarding informed consent requirements',
+                        'Ensure proper labeling of investigational device',
+                        'Submit protocol to IRB',
+                        'See SECTION 4 for additional exempt study requirements'
+                    ]
+                },
+
+                ivd_exempt_consent: {
+                    title: 'IVD Study EXEMPT from IDE - Informed Consent Required',
+                    type: 'success',
+                    icon: CheckCircle,
+                    message: 'The study is EXEMPT from IDE requirements, but informed consent is required.',
+                    details: 'All answers to questions 1-4 are No. You answered Yes to question 5 or 6, so informed consent is required. Labeling requirements still apply (21 CFR 809.10(c)). See SECTION 4.',
+                    requirements: [
+                        'Informed consent is required (21 CFR 50)',
+                        'IRB review is required (21 CFR 56)',
+                        'Labeling requirements apply (21 CFR 809.10(c))',
+                        'Subject only to clinical investigator disqualification regulations (21 CFR 812.119)'
+                    ],
+                    nextSteps: [
+                        'Prepare informed consent documents',
+                        'Submit protocol to IRB',
+                        'Ensure proper labeling of investigational device',
+                        'Maintain records of consent and device use',
+                        'See SECTION 4 for additional exempt study requirements'
+                    ]
+                },
+
+                device_exempt_consumer: {
+                    title: 'Application is Exempt from IDE Requirements',
+                    type: 'success',
+                    icon: CheckCircle,
+                    message: 'The application is exempt from IDE requirements.',
+                    details: 'Yes to question 1 and No to questions 2 & 3. The study qualifies as consumer preference testing without safety/effectiveness evaluation and without subject risk. See SECTION 4.',
+                    requirements: [
+                        'Subject only to clinical investigator disqualification regulations (21 CFR 812.119)',
+                        'Must comply with FDA requirements for IRB review (21 CFR 56)',
+                        'Must comply with informed consent requirements (21 CFR 50)'
+                    ],
+                    nextSteps: [
+                        'Submit protocol to IRB',
+                        'Prepare informed consent documents',
+                        'Ensure study remains within consumer preference scope',
+                        'Do not evaluate safety or effectiveness',
+                        'See SECTION 4 for additional exempt study requirements'
+                    ]
+                },
+
+                device_exempt_custom: {
+                    title: 'Custom Device - Exempt from IDE Regulations',
+                    type: 'success',
+                    icon: CheckCircle,
+                    message: 'The device is exempt from IDE regulations.',
+                    details: 'The device meets the definition of a custom device and is not being studied for commercial distribution.',
+                    requirements: [
+                        'Device must be for a named patient',
+                        'Must comply with physician\'s order',
+                        'Cannot be for commercial distribution',
+                        'Subject only to clinical investigator disqualification regulations (21 CFR 812.119)',
+                        'Must comply with FDA requirements for IRB review (21 CFR 56) and informed consent (21 CFR 50)'
+                    ],
+                    nextSteps: [
+                        'Verify device meets all custom device criteria',
+                        'Consult with your IRB',
+                        'Ensure proper documentation of physician order',
+                        'Do not use for commercial distribution purposes',
+                        'See SECTION 4 for additional exempt study requirements'
+                    ]
+                },
+
+                device_sr_ide: {
+                    title: 'Significant Risk (SR) Device - IDE Must Be Submitted to FDA',
+                    type: 'error',
+                    icon: AlertCircle,
+                    message: 'This is a Significant Risk (SR) device. An IDE must be submitted to the FDA for this study.',
+                    details: 'You answered Yes to at least one of the risk determination questions 1-5.',
+                    requirements: [
+                        'IDE application must be submitted to FDA',
+                        'FDA approval required before study begins',
+                        'IRB review and approval required',
+                        'Informed consent from all participants',
+                        'Full compliance with 21 CFR 812 regulations'
+                    ],
+                    nextSteps: [
+                        'Contact Regulatory Affairs immediately at RegAffairs@CDC.Gov',
+                        'Prepare comprehensive IDE application',
+                        'Do not begin study until FDA approves IDE',
+                        'Ensure robust monitoring and safety protocols',
+                        'Plan for ongoing reporting to FDA'
+                    ]
+                },
+
+                device_nsr: {
+                    title: 'Non-Significant Risk (NSR) Device',
+                    type: 'warning',
+                    icon: AlertCircle,
+                    message: 'The device used in the study is a non-significant risk device (NSR).',
+                    details: 'You answered No to all risk determination questions 1-5. You may need to follow abbreviated IDE requirements (21 CFR 812.2(b)) or the device may be exempt from IDE requirements (refer to SECTION 4).',
+                    requirements: [
+                        'IRB must agree with NSR determination',
+                        'Abbreviated IDE requirements may apply (21 CFR 812.2(b))',
+                        'The abbreviated IDE requirements do not require submission of an IDE to FDA',
+                        'However, the following FDA regulations still apply:',
+                        '  • 21 CFR 812.5 - Labeling of Investigational Device',
+                        '  • 21 CFR 812.46 - Monitoring Investigations',
+                        '  • 21 CFR 812.140 - Records and Reports',
+                        '  • 21 CFR 812.150 - Records and Reports',
+                        '  • 21 CFR 812.7 - Prohibition of Promotion and other Practices'
+                    ],
+                    nextSteps: [
+                        'Contact Regulatory Affairs at RegAffairs@CDC.Gov for assistance in determining if the device is exempt, or if IDE or abbreviated IDE is required',
+                        'Submit NSR determination to IRB for concurrence',
+                        'Follow applicable abbreviated IDE requirements (no FDA submission needed)',
+                        'Maintain required records and documentation',
+                        'Ensure proper device labeling',
+                        'Refer to SECTION 4 for exempt study requirements'
+                    ]
+                }
+            };
+
+            const handleAnswer = (questionKey, value) => {
+                setAnswers({ ...answers, [questionKey]: value });
+
+                const question = questions[questionKey];
+                let nextStep = null;
+
+                if (question.type === 'boolean') {
+                    if (value === 'yes') {
+                        nextStep = question.yesNext || question.yesOutcome;
+                    } else {
+                        nextStep = question.noNext || question.noOutcome;
+                    }
+                } else if (question.type === 'multi-checkbox') {
+                    const hasAnyYes = Object.values(value).some(v => v);
+                    nextStep = hasAnyYes ? question.yesOutcome : question.noNext;
+                } else if (question.type === 'category') {
+                    const selectedOption = question.options.find(opt => opt.value === value);
+                    nextStep = selectedOption?.next;
+                }
+
+                if (nextStep) {
+                    setHistory([...history, nextStep]);
+                    setCurrentStep(nextStep);
+                }
+            };
+
+            const handleBack = () => {
+                if (history.length > 1) {
+                    const newHistory = [...history];
+                    newHistory.pop();
+                    const previousStep = newHistory[newHistory.length - 1];
+                    setHistory(newHistory);
+                    setCurrentStep(previousStep);
+                }
+            };
+
+            const handleRestart = () => {
+                setCurrentStep('start');
+                setAnswers({});
+                setHistory(['start']);
+                setShowDefinition(null);
+            };
+
+            const generateReport = () => {
+                const outcome = outcomes[currentStep];
+                const answeredQuestions = Object.keys(answers).filter(key => questions[key]);
+
+                let report = `FDA Regulatory Determination Report\n`;
+                report += `Generated: ${new Date().toLocaleDateString()}\n`;
+                report += `\n${'='.repeat(70)}\n\n`;
+                report += `DETERMINATION: ${outcome.title}\n`;
+                report += `${'-'.repeat(70)}\n`;
+                report += `${outcome.message}\n\n`;
+                report += `Details: ${outcome.details}\n\n`;
+                report += `REQUIREMENTS:\n`;
+                outcome.requirements.forEach((req, i) => {
+                    report += `${i + 1}. ${req}\n`;
+                });
+                report += `\nNEXT STEPS:\n`;
+                outcome.nextSteps.forEach((step, i) => {
+                    report += `${i + 1}. ${step}\n`;
+                });
+                report += `\n${'='.repeat(70)}\n\n`;
+                report += `DECISION PATH:\n`;
+                answeredQuestions.forEach((key, i) => {
+                    const q = questions[key];
+                    const a = answers[key];
+                    let answerText = '';
+                    if (typeof a === 'boolean') {
+                        answerText = a ? 'Yes' : 'No';
+                    } else if (typeof a === 'string') {
+                        answerText = a;
+                    } else if (typeof a === 'object') {
+                        answerText = Object.entries(a).filter(([k, v]) => v).map(([k]) => k).join(', ') || 'None selected';
+                    }
+                    report += `${i + 1}. ${q.text}\n   Answer: ${answerText}\n\n`;
+                });
+                report += `\n${'='.repeat(70)}\n\n`;
+                report += `DISCLAIMER:\n`;
+                report += `While every effort has been made to ensure that this check list conforms with\n`;
+                report += `all applicable regulations and requirements, it is not meant to be all inclusive,\n`;
+                report += `comprehensive or up to date document or act as a substitute for regulatory guidance.\n\n`;
+                report += `For further consultation, contact the Medical Countermeasures Regulatory Support Team at RegAffairs@cdc.gov\n`;
+
+                return report;
+            };
+
+            const downloadReport = () => {
+                const report = generateReport();
+                const blob = new Blob([report], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `FDA-Determination-${new Date().toISOString().split('T')[0]}.txt`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            };
+
+            const renderQuestion = () => {
+                const question = questions[currentStep];
+                if (!question) return null;
+
+                return (
+                    <div className="space-y-4">
+                        <div className="flex items-start gap-3">
+                            <div className="flex-1">
+                                <h2 className="text-xl font-semibold text-gray-800 mb-2">{question.text}</h2>
+                                {question.description && (
+                                    <p className="text-sm text-gray-600 mb-3 whitespace-pre-line">{question.description}</p>
+                                )}
+                            </div>
+                            {question.helpText && (
+                                <button
+                                    onClick={() => setShowDefinition(showDefinition === currentStep ? null : currentStep)}
+                                    className="p-2 text-gray-500 hover:text-blue-600 transition-colors"
+                                >
+                                    <HelpCircle className="w-5 h-5" />
+                                </button>
+                            )}
+                        </div>
+
+                        {showDefinition === currentStep && question.helpText && (
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                <div className="flex gap-2">
+                                    <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                                    <p className="text-sm text-gray-700">{question.helpText}</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {renderAnswerOptions(question)}
+                    </div>
+                );
+            };
+
+            const renderAnswerOptions = (question) => {
+                if (question.type === 'boolean') {
+                    return (
+                        <div className="flex gap-4 mt-6">
+                            <button
+                                onClick={() => handleAnswer(currentStep, 'yes')}
+                                className="flex-1 bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors shadow-md"
+                            >
+                                Yes
+                            </button>
+                            <button
+                                onClick={() => handleAnswer(currentStep, 'no')}
+                                className="flex-1 bg-red-500 hover:bg-red-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors shadow-md"
+                            >
+                                No
+                            </button>
+                        </div>
+                    );
+                } else if (question.type === 'multi-checkbox') {
+                    const checkboxAnswers = answers[currentStep] || {};
+                    return (
+                        <div className="space-y-4 mt-6">
+                            {question.options.map(option => (
+                                <label key={option.value} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer transition-colors">
+                                    <input
+                                        type="checkbox"
+                                        checked={checkboxAnswers[option.value] || false}
+                                        onChange={(e) => {
+                                            const newAnswers = {
+                                                ...checkboxAnswers,
+                                                [option.value]: e.target.checked
+                                            };
+                                            setAnswers({ ...answers, [currentStep]: newAnswers });
+                                        }}
+                                        className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                                    />
+                                    <span className="text-gray-800">{option.label}</span>
+                                </label>
+                            ))}
+                            <button
+                                onClick={() => handleAnswer(currentStep, checkboxAnswers)}
+                                className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors shadow-md mt-4"
+                            >
+                                Continue
+                            </button>
+                        </div>
+                    );
+                } else if (question.type === 'category') {
+                    return (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+                            {question.options.map(option => (
+                                <button
+                                    key={option.value}
+                                    onClick={() => handleAnswer(currentStep, option.value)}
+                                    className="flex items-center gap-4 p-6 bg-white border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:shadow-lg transition-all"
+                                >
+                                    <span className="text-4xl">{option.icon}</span>
+                                    <span className="text-lg font-semibold text-gray-800">{option.label}</span>
+                                </button>
+                            ))}
+                        </div>
+                    );
+                }
+            };
+
+            const renderOutcome = () => {
+                const outcome = outcomes[currentStep];
+                if (!outcome) return null;
+
+                const Icon = outcome.icon;
+                const colors = {
+                    success: 'bg-green-50 border-green-500 text-green-800',
+                    error: 'bg-red-50 border-red-500 text-red-800',
+                    warning: 'bg-yellow-50 border-yellow-500 text-yellow-800',
+                    info: 'bg-blue-50 border-blue-500 text-blue-800'
+                };
+
+                return (
+                    <div className="space-y-6">
+                        <div className={`border-l-4 p-6 rounded-lg ${colors[outcome.type]}`}>
+                            <div className="flex items-start gap-4">
+                                <Icon className="w-8 h-8 flex-shrink-0" />
+                                <div className="flex-1">
+                                    <h2 className="text-2xl font-bold mb-2">{outcome.title}</h2>
+                                    <p className="text-lg mb-2">{outcome.message}</p>
+                                    <p className="text-sm opacity-90">{outcome.details}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-lg border border-gray-200 p-6">
+                            <h3 className="text-lg font-semibold text-gray-800 mb-4">Requirements:</h3>
+                            <ul className="space-y-2">
+                                {outcome.requirements.map((req, i) => (
+                                    <li key={i} className="flex items-start gap-2 text-gray-700">
+                                        <span className="text-blue-600 font-bold">•</span>
+                                        <span>{req}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+
+                        <div className="bg-white rounded-lg border border-gray-200 p-6">
+                            <h3 className="text-lg font-semibold text-gray-800 mb-4">Next Steps:</h3>
+                            <ol className="space-y-2">
+                                {outcome.nextSteps.map((step, i) => (
+                                    <li key={i} className="flex items-start gap-3 text-gray-700">
+                                        <span className="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 text-sm font-semibold">
+                                            {i + 1}
+                                        </span>
+                                        <span>{step}</span>
+                                    </li>
+                                ))}
+                            </ol>
+                        </div>
+
+                        <div className="flex gap-4">
+                            <button
+                                onClick={downloadReport}
+                                className="flex items-center gap-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors shadow-md"
+                            >
+                                <Download className="w-5 h-5" />
+                                Download Report
+                            </button>
+                            <button
+                                onClick={handleRestart}
+                                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors shadow-md"
+                            >
+                                Start New Assessment
+                            </button>
+                        </div>
+                    </div>
+                );
+            };
+
+            const isOutcome = outcomes[currentStep];
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8 px-4">
+                    <div className="max-w-4xl mx-auto">
+                        <div className="bg-white rounded-xl shadow-2xl p-8">
+                            <div className="mb-8">
+                                <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                                    FDA Regulatory Determination Tool
+                                </h1>
+                                <p className="text-gray-600">
+                                    Interactive decision tree for drugs, biologics, and medical devices
+                                </p>
+                            </div>
+
+                            <div className="mb-6">
+                                <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
+                                    <span>Progress</span>
+                                    <span>{history.length} steps</span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-2">
+                                    <div 
+                                        className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                                        style={{ width: isOutcome ? '100%' : `${Math.min((history.length / 15) * 100, 95)}%` }}
+                                    ></div>
+                                </div>
+                            </div>
+
+                            {isOutcome ? renderOutcome() : renderQuestion()}
+
+                            {!isOutcome && history.length > 1 && (
+                                <div className="mt-6 flex gap-4">
+                                    <button
+                                        onClick={handleBack}
+                                        className="flex items-center gap-2 bg-gray-500 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+                                    >
+                                        <ChevronLeft className="w-5 h-5" />
+                                        Back
+                                    </button>
+                                    <button
+                                        onClick={handleRestart}
+                                        className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-4 rounded-lg transition-colors"
+                                    >
+                                        Restart
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="mt-8 bg-white rounded-xl shadow-lg p-6">
+                            <h3 className="text-lg font-semibold text-gray-800 mb-3">Important Disclaimer</h3>
+                            <p className="text-sm text-gray-600 leading-relaxed">
+                                While every effort has been made to ensure that this check list conforms with all applicable 
+                                regulations and requirements, it is not mean to be all inclusive, comprehensive or up to date 
+                                document or act as a substitute for regulatory guidance. Please contact Regulatory Affairs at{' '}
+                                <a href="mailto:RegAffairs@CDC.Gov" className="text-blue-600 hover:underline">
+                                    RegAffairs@CDC.Gov
+                                </a>{' '}
+                                for further consultation.
+                            </p>
+                        </div>
+
+                        <div className="mt-4 bg-blue-50 rounded-lg p-4 border border-blue-200">
+                            <h4 className="text-sm font-semibold text-blue-900 mb-2">SECTION 4: EXEMPT STUDIES</h4>
+                            <p className="text-xs text-blue-800 leading-relaxed">
+                                Exempt studies are subject only to the clinical investigator disqualification regulations 
+                                contained in 21 CFR 812.119. However, exempt studies must comply with FDA requirements for 
+                                IRB review (21 CFR 56) and informed consent (21 CFR 50).
+                            </p>
+                        </div>
+
+                        <div className="mt-6 text-center text-sm text-gray-600">
+                            <p>Based on FDA regulations: 21 CFR Parts 50, 56, 312, 812</p>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Hide loading and render app
+        document.getElementById('loading').style.display = 'none';
+        ReactDOM.render(<FDADecisionTreeBot />, document.getElementById('root'));
+    </script>
+</body>
+</html>
